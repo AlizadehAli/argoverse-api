@@ -18,7 +18,8 @@ def compute_polygon_bboxes(polygons: np.ndarray) -> np.ndarray:
     Returns:
         polygon_bboxes: a float array with shape (n, 4).
     """
-    bboxes: List[np.ndarray] = []
+    # bboxes: List[np.ndarray] = []
+    bboxes = []
 
     for polygon in polygons:
         bbox = compute_point_cloud_bbox(polygon)
@@ -50,7 +51,7 @@ def compute_point_cloud_bbox(point_cloud: np.ndarray, verbose: bool = False) -> 
     bbox = np.array([x_min, y_min, x_max, y_max])
 
     if verbose:
-        logger.info(f"Point cloud bbox width = {bbox_width}, height = {bbox_height}")
+        logger.info("Point cloud bbox width = " + str(bbox_width) + ", height = " + str(bbox_height))
     return bbox
 
 

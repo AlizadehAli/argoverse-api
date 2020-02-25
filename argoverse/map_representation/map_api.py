@@ -66,10 +66,14 @@ class ArgoverseMap:
         self.city_rasterized_ground_height_dict = self.build_city_ground_height_index()
 
         # get hallucinated lane extends and driveable area from binary img
-        self.city_to_lane_polygons_dict: Mapping[str, np.ndarray] = {}
-        self.city_to_driveable_areas_dict: Mapping[str, np.ndarray] = {}
-        self.city_to_lane_bboxes_dict: Mapping[str, np.ndarray] = {}
-        self.city_to_da_bboxes_dict: Mapping[str, np.ndarray] = {}
+        # self.city_to_lane_polygons_dict: Mapping[str, np.ndarray] = {}
+        # self.city_to_driveable_areas_dict: Mapping[str, np.ndarray] = {}
+        # self.city_to_lane_bboxes_dict: Mapping[str, np.ndarray] = {}
+        # self.city_to_da_bboxes_dict: Mapping[str, np.ndarray] = {}
+        self.city_to_lane_polygons_dict = {}
+        self.city_to_driveable_areas_dict = {}
+        self.city_to_lane_bboxes_dict = {}
+        self.city_to_da_bboxes_dict = {}
 
         for city_name in self.city_name_to_city_id_dict.keys():
             lane_polygons = np.array(self.get_vector_map_lane_polygons(city_name))
@@ -129,7 +133,8 @@ class ArgoverseMap:
         da_imgray = self.city_rasterized_da_roi_dict[city_name]["da_mat"]
 
         contours = get_img_contours(da_imgray)
-        city_contours: List[np.ndarray] = []
+        # city_contours: List[np.ndarray] = []
+        city_contours = []
         for i, contour_im_coords in enumerate(contours):
             contour_im_coords = contour_im_coords.squeeze()
             contour_im_coords = contour_im_coords.astype(np.float64)
@@ -154,7 +159,7 @@ class ArgoverseMap:
         """
         city_lane_centerlines_dict = {}
         for city_name, city_id in self.city_name_to_city_id_dict.items():
-            xml_fpath = MAP_FILES_ROOT / f"pruned_argoverse_{city_name}_{city_id}_vector_map.xml"
+            xml_fpath = MAP_FILES_ROOT / ("pruned_argoverse_"+city_name +'_'+str(city_id)+"_vector_map.xml")
             city_lane_centerlines_dict[city_name] = load_lane_segments_from_xml(xml_fpath)
 
         return city_lane_centerlines_dict
@@ -170,14 +175,15 @@ class ArgoverseMap:
                     city_to_pkl_image_se2: SE(2) that produces takes point in pkl image to city coordinates, e.g.
                     p_city = city_Transformation_pklimage * p_pklimage
         """
-        city_rasterized_da_roi_dict: Dict[str, Dict[str, np.ndarray]] = {}
+        # city_rasterized_da_roi_dict: Dict[str, Dict[str, np.ndarray]] = {}
+        city_rasterized_da_roi_dict = {}
         for city_name, city_id in self.city_name_to_city_id_dict.items():
             city_id = self.city_name_to_city_id_dict[city_name]
             city_rasterized_da_roi_dict[city_name] = {}
-            npy_fpath = MAP_FILES_ROOT / f"{city_name}_{city_id}_driveable_area_mat_2019_05_28.npy"
+            npy_fpath = MAP_FILES_ROOT / (city_name+'_'+str(city_id)+"_driveable_area_mat_2019_05_28.npy")
             city_rasterized_da_roi_dict[city_name]["da_mat"] = np.load(npy_fpath)
 
-            se2_npy_fpath = MAP_FILES_ROOT / f"{city_name}_{city_id}_npyimage_to_city_se2_2019_05_28.npy"
+            se2_npy_fpath = MAP_FILES_ROOT / (city_name+'_'+str(city_id)+"_npyimage_to_city_se2_2019_05_28.npy")
             city_rasterized_da_roi_dict[city_name]["npyimage_to_city_se2"] = np.load(se2_npy_fpath)
             da_mat = copy.deepcopy(city_rasterized_da_roi_dict[city_name]["da_mat"])
             city_rasterized_da_roi_dict[city_name]["roi_mat"] = dilate_by_l2(da_mat, dilation_thresh=ROI_ISOCONTOUR)
@@ -194,15 +200,16 @@ class ArgoverseMap:
                     city_to_pkl_image_se2: SE(2) that produces takes point in pkl image to city
                     coordinates, e.g. p_city = city_Transformation_pklimage * p_pklimage
         """
-        city_rasterized_ground_height_dict: Dict[str, Dict[str, np.ndarray]] = {}
+        # city_rasterized_ground_height_dict: Dict[str, Dict[str, np.ndarray]] = {}
+        city_rasterized_ground_height_dict = {}
         for city_name, city_id in self.city_name_to_city_id_dict.items():
             city_rasterized_ground_height_dict[city_name] = {}
-            npy_fpath = MAP_FILES_ROOT / f"{city_name}_{city_id}_ground_height_mat_2019_05_28.npy"
+            npy_fpath = MAP_FILES_ROOT / (city_name+'_'+str(city_id)+"_ground_height_mat_2019_05_28.npy")
 
             # load the file with rasterized values
             city_rasterized_ground_height_dict[city_name]["ground_height"] = np.load(npy_fpath)
 
-            se2_npy_fpath = MAP_FILES_ROOT / f"{city_name}_{city_id}_npyimage_to_city_se2_2019_05_28.npy"
+            se2_npy_fpath = MAP_FILES_ROOT / (city_name+'_'+str(city_id)+"_npyimage_to_city_se2_2019_05_28.npy")
             city_rasterized_ground_height_dict[city_name]["npyimage_to_city_se2"] = np.load(se2_npy_fpath)
 
         return city_rasterized_ground_height_dict
@@ -251,10 +258,10 @@ class ArgoverseMap:
         city_halluc_tableidx_to_laneid_map = {}
 
         for city_name, city_id in self.city_name_to_city_id_dict.items():
-            json_fpath = MAP_FILES_ROOT / f"{city_name}_{city_id}_tableidx_to_laneid_map.json"
+            json_fpath = MAP_FILES_ROOT / (city_name+'_'+str(city_id)+"_tableidx_to_laneid_map.json")
             city_halluc_tableidx_to_laneid_map[city_name] = read_json_file(json_fpath)
 
-            npy_fpath = MAP_FILES_ROOT / f"{city_name}_{city_id}_halluc_bbox_table.npy"
+            npy_fpath = MAP_FILES_ROOT / (city_name+'_'+str(city_id)+"_halluc_bbox_table.npy")
             city_halluc_bbox_table[city_name] = np.load(npy_fpath)
 
         return city_halluc_bbox_table, city_halluc_tableidx_to_laneid_map
@@ -378,7 +385,22 @@ class ArgoverseMap:
         npyimage_coords = npyimage_to_city_se2.transform_point_cloud(city_coords)
         npyimage_coords = npyimage_coords.astype(np.int64)
 
-        # index in at (x,y) locations, which are (y,x) in the image
+        # index at (x,y) locations, which are (y,x) in the image
+        max_y = np.max(npyimage_coords[:, 1])
+        max_x = np.max(npyimage_coords[:, 0])
+
+        height_y, height_x = np.shape(ground_height_mat)
+
+        assert np.all(npyimage_coords[:, 1] > 0) and np.all(
+            npyimage_coords[:, 0] > 0
+        ), "Invalid coordinates, please make sure the query location is in a valid city coordinate"
+
+        if max_x > height_x or max_y > height_y:
+            # expand ground height npy image, fill with NaN
+            ground_height_mat_pad = np.full((max_y, max_x), np.nan)
+            ground_height_mat_pad[0:max_y, 0:max_x] = ground_height_mat
+            ground_height_mat = copy.deepcopy(ground_height_mat_pad)
+
         ground_height_values = ground_height_mat[npyimage_coords[:, 1], npyimage_coords[:, 0]]
         return ground_height_values
 
@@ -595,7 +617,8 @@ class ArgoverseMap:
         if len(overlap_indxs) == 0:
             return []
 
-        neighborhood_lane_ids: List[int] = []
+        # neighborhood_lane_ids: List[int] = []
+        neighborhood_lane_ids = []
         for overlap_idx in overlap_indxs:
             lane_segment_id = self.city_halluc_tableidx_to_laneid_map[city_name][str(overlap_idx)]
             neighborhood_lane_ids.append(lane_segment_id)
@@ -804,7 +827,8 @@ class ArgoverseMap:
         dfs_threshold = displacement * 2.0
 
         # DFS to get all successor and predecessor candidates
-        obs_pred_lanes: List[Sequence[int]] = []
+        # obs_pred_lanes: List[Sequence[int]] = []
+        obs_pred_lanes = []
         for lane in curr_lane_candidates:
             candidates_future = self.dfs(lane, city_name, 0, dfs_threshold)
             candidates_past = self.dfs(lane, city_name, 0, dfs_threshold, True)
@@ -928,7 +952,8 @@ class ArgoverseMap:
         """
         neighborhood_lane_ids = self.get_lane_ids_in_xy_bbox(query_x, query_y, city_name)
 
-        occupied_lane_ids: List[int] = []
+        # occupied_lane_ids: List[int] = []
+        occupied_lane_ids = []
         if neighborhood_lane_ids is not None:
             for lane_id in neighborhood_lane_ids:
                 lane_polygon = self.get_lane_segment_polygon(lane_id, city_name)

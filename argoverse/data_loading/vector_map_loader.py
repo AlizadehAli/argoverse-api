@@ -52,8 +52,7 @@ from argoverse.map_representation.lane_segment import LaneSegment
 
 logger = logging.getLogger(__name__)
 
-
-_PathLike = Union[str, "os.PathLike[str]"]
+# _PathLike = Union[str, "os.PathLike[str]"]
 
 
 class Node:
@@ -271,15 +270,26 @@ def extract_lane_segment_from_ET_element(
         lane_segment: LaneSegment object
         lane_id
     """
-    lane_obj: Dict[str, Any] = {}
+    # lane_obj: Dict[str, Any] = {}
+    lane_obj = {}
     lane_id = get_lane_identifier(child)
-    node_id_list: List[int] = []
+    # node_id_list: List[int] = []
+    node_id_list = []
     for element in child:
         # The cast on the next line is the result of a typeshed bug.  This really is a List and not a ItemsView.
-        way_field = cast(List[Tuple[str, str]], element.items())
+        way_field = cast(List[Tuple[str, str]], list(element.items()))
         field_name = way_field[0][0]
         if field_name == "k":
             key = way_field[0][1]
+            if key in {"predecessor", "successor"}:
+                append_additional_key_value_pair(lane_obj, way_field)
+            else:
+                append_unique_key_value_pair(lane_obj, way_field)
+        elif field_name == "v":
+            assert way_field[1][0] == "k"
+            key = way_field[1][1]
+            way_field[1] = ("v", way_field[0][1])
+            way_field[0] = ("k", key)
             if key in {"predecessor", "successor"}:
                 append_additional_key_value_pair(lane_obj, way_field)
             else:
@@ -292,7 +302,7 @@ def extract_lane_segment_from_ET_element(
     return lane_segment, lane_id
 
 
-def load_lane_segments_from_xml(map_fpath: _PathLike) -> Mapping[int, LaneSegment]:
+def load_lane_segments_from_xml(map_fpath) -> Mapping[int, LaneSegment]:
     """
     Load lane segment object from xml file
 
@@ -302,10 +312,10 @@ def load_lane_segments_from_xml(map_fpath: _PathLike) -> Mapping[int, LaneSegmen
     Returns:
        lane_objs: List of LaneSegment objects
     """
-    tree = ET.parse(os.fspath(map_fpath))
+    tree = ET.parse(str(map_fpath))
     root = tree.getroot()
 
-    logger.info(f"Loaded root: {root.tag}")
+    logger.info("Loaded root: "+root.tag)
 
     all_graph_nodes = {}
     lane_objs = {}

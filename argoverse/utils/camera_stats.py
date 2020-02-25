@@ -47,6 +47,6 @@ def get_image_dims_for_camera(camera_name: str) -> Tuple[Optional[int], Optional
         img_width = STEREO_IMG_WIDTH
         img_height = STEREO_IMG_HEIGHT
     else:
-        logger.error(f"{camera_name} not recognized")
+        logger.error(camera_name+" not recognized")
         return None, None
     return img_width, img_height

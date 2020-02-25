@@ -10,4 +10,4 @@ def generate_datetime_string() -> str:
     Returns:
         String with of the format YYYY_MM_DD_HH_MM_SS with 24-hour time used
     """
-    return f"{datetime.datetime.now():%Y_%m_%d_%H_%M_%S}"
+    return ("%4i_%2i_%2i_%2i_%2i_%2i" % datetime.datetime.now())

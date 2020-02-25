@@ -31,15 +31,20 @@ class ArgoverseForecastingLoader:
         Args:
             root_dir: Path to the folder having sequence csv files
         """
-        self._track_id_list: Optional[Mapping[str, Sequence[int]]] = None
-        self._city_list: Optional[Mapping[str, str]] = None
+        # self._track_id_list: Optional[Mapping[str, Sequence[int]]] = None
+        # self._city_list: Optional[Mapping[str, str]] = None
+        self._track_id_list = None
+        self._city_list = None
 
-        self.counter: int = 0
+        # self.counter: int = 0
+        self.counter = 0
 
         root_dir = Path(root_dir)
-        self.seq_list: Sequence[Path] = [(root_dir / x).absolute() for x in os.listdir(root_dir)]
+        # self.seq_list: Sequence[Path] = [(root_dir / x).absolute() for x in os.listdir(root_dir)]
+        self.seq_list = [(root_dir / x).absolute() for x in os.listdir(str(root_dir))]
 
-        self.current_seq: Path = self.seq_list[self.counter]
+        # self.current_seq: Path = self.seq_list[self.counter]
+        self.current_seq = self.seq_list[self.counter]
 
     @property
     def track_id_list(self) -> Sequence[int]:
@@ -137,11 +142,7 @@ class ArgoverseForecastingLoader:
         Returns:
             A string storing some stats of the current sequence
         """
-        return f"""Seq : {self.current_seq}
-        ----------------------
-        || City: {self.city}
-        || # Tracks: {len(self.track_id_list)}
-        ----------------------"""
+        return "Seq : {self.current_seq}\n----------------------\n|| City: {self.city}\n|| # Tracks: {len(self.track_id_list)}\n----------------------"
 
     def __getitem__(self, key: int) -> "ArgoverseForecastingLoader":
         """Get the DataLoader object for the sequence corresponding to the given index.

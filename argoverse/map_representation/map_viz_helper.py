@@ -149,7 +149,7 @@ def render_global_city_map_bev(
 
     for x in range(0, im_w * UPSAMPLE_FACTOR, GRID_NUMBER_INTERVAL):
         for y in range(0, im_h * UPSAMPLE_FACTOR, GRID_NUMBER_INTERVAL):
-            coords_str = f"{x}_{y}"
+            coords_str = str(x)+"_"+str(y)
             cv2.putText(
                 rendered_image,
                 coords_str,
@@ -208,7 +208,7 @@ def render_global_city_map_bev(
     rendered_image = rendered_image.astype(np.uint8)
 
     cur_datetime = generate_datetime_string()
-    img_save_fpath = f"{city_name}_{centerline_color_scheme}_{cur_datetime}.png"
+    img_save_fpath = city_name+'_'+centerline_color_scheme+'_'+cur_datetime+".png"
     cv2.imwrite(filename=img_save_fpath, img=rendered_image)
 
     warnings.resetwarnings()

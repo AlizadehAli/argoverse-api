@@ -15,7 +15,7 @@ from argoverse.data_loading.pose_loader import get_city_SE3_egovehicle_at_sensor
 from argoverse.data_loading.synchronization_database import SynchronizationDB
 from argoverse.utils.calibration import Calibration, load_calib, load_image
 from argoverse.utils.camera_stats import CAMERA_LIST, RING_CAMERA_LIST, STEREO_CAMERA_LIST
-from argoverse.utils.ply_loader import load_ply
+# from argoverse.utils.ply_loader import load_ply
 from argoverse.utils.se3 import SE3
 
 logger = logging.getLogger(__name__)
@@ -39,24 +39,24 @@ class ArgoverseTrackingLoader:
     def __init__(self, root_dir: str) -> None:
         # initialize class member
         self.CAMERA_LIST = CAMERA_LIST
-        self._log_list: Optional[List[str]] = None
-        self._image_list: Optional[Dict[str, Dict[str, List[str]]]] = None
-        self._image_list_sync: Optional[Dict[str, Dict[str, List[np.ndarray]]]] = None
-        self._lidar_list: Optional[Dict[str, List[str]]] = None
-        self._image_timestamp_list: Optional[Dict[str, Dict[str, List[int]]]] = None
-        self._timestamp_image_dict: Optional[Dict[str, Dict[str, Dict[int, str]]]] = None
-        self._image_timestamp_list_sync: Optional[Dict[str, Dict[str, List[int]]]] = None
-        self._lidar_timestamp_list: Optional[Dict[str, List[int]]] = None
-        self._timestamp_lidar_dict: Optional[Dict[str, Dict[int, str]]] = None
-        self._label_list: Optional[Dict[str, List[str]]] = None
-        self._calib: Optional[Dict[str, Dict[str, Calibration]]] = None  # { log_name: { camera_name: Calibration } }
+        self._log_list = None
+        self._image_list = None
+        self._image_list_sync = None
+        self._lidar_list = None
+        self._image_timestamp_list = None
+        self._timestamp_image_dict = None
+        self._image_timestamp_list_sync = None
+        self._lidar_timestamp_list = None
+        self._timestamp_lidar_dict = None
+        self._label_list = None
+        self._calib = None  # { log_name: { camera_name: Calibration } }
         self._city_name = None
-        self.counter: int = 0
+        self.counter = 0
 
-        self.image_count: int = 0
-        self.lidar_count: int = 0
+        self.image_count = 0
+        self.lidar_count = 0
 
-        self.root_dir: str = root_dir
+        self.root_dir = root_dir
 
         self.current_log = self.log_list[self.counter]
 
@@ -65,14 +65,14 @@ class ArgoverseTrackingLoader:
         assert self.label_list is not None
 
         # load calibration file
-        self.calib_filename: str = os.path.join(self.root_dir, self.current_log, "vehicle_calibration_info.json")
+        self.calib_filename = os.path.join(self.root_dir, self.current_log, "vehicle_calibration_info.json")
 
         # lidar @10hz, ring camera @30hz, stereo camera @5hz
-        self.num_lidar_frame: int = len(self.lidar_timestamp_list)
-        self.num_ring_camera_frame: int = len(self.image_timestamp_list[RING_CAMERA_LIST[0]])
-        self.num_stereo_camera_frame: int = len(self.image_timestamp_list[STEREO_CAMERA_LIST[0]])
+        self.num_lidar_frame = len(self.lidar_timestamp_list)
+        self.num_ring_camera_frame = len(self.image_timestamp_list[RING_CAMERA_LIST[0]])
+        self.num_stereo_camera_frame = len(self.image_timestamp_list[STEREO_CAMERA_LIST[0]])
 
-        self.sync: SynchronizationDB = SynchronizationDB(root_dir)
+        self.sync = SynchronizationDB(root_dir)
 
         assert self.image_list_sync is not None
         assert self.calib is not None
@@ -361,18 +361,19 @@ class ArgoverseTrackingLoader:
         end_time = self.lidar_timestamp_list[-1]
 
         time_in_sec = (end_time - start_time) * 10 ** (-9)
-        return f"""
---------------------------------------------------------------------
-------Log id: {self.current_log}
---------------------------------------------------------------------
-Time: {time_in_sec} sec
-# frame lidar (@10hz): {frame_lidar}
-# frame ring camera (@30hz): {frame_image_ring}
-# frame stereo camera (@5hz): {frame_image_stereo}
-
-Total images: {sum(num_images)}
-Total bounding box: {sum(num_annotations)}
-        """
+        return None
+#         f"""
+# --------------------------------------------------------------------
+# ------Log id: {self.current_log}
+# --------------------------------------------------------------------
+# Time: {time_in_sec} sec
+# # frame lidar (@10hz): {frame_lidar}
+# # frame ring camera (@30hz): {frame_image_ring}
+# # frame stereo camera (@5hz): {frame_image_stereo}
+#
+# Total images: {sum(num_images)}
+# Total bounding box: {sum(num_annotations)}
+#         """
 
     def __getitem__(self, key: int) -> "ArgoverseTrackingLoader":
         self.counter = key
@@ -462,7 +463,7 @@ Total bounding box: {sum(num_annotations)}
         try:
             image_path = self._timestamp_image_dict[log_id][camera][timestamp]
         except KeyError:
-            logging.error(f"Cannot find {camera} image at timestamp {timestamp} in log {log_id}")
+            logging.error("Cannot find {camera} image at timestamp {timestamp} in log {log_id}")
             return None
 
         if load:

@@ -5,10 +5,8 @@ import os
 import pickle as pkl
 from typing import Any, Dict, Union
 
-_PathLike = Union[str, "os.PathLike[str]"]
 
-
-def load_pkl_dictionary(pkl_fpath: _PathLike) -> Any:
+def load_pkl_dictionary(pkl_fpath) -> Any:
     """Load a Python dictionary from a file serialized by pickle.
 
     Args:
@@ -21,7 +19,7 @@ def load_pkl_dictionary(pkl_fpath: _PathLike) -> Any:
         return pkl.load(f)
 
 
-def save_pkl_dictionary(pkl_fpath: _PathLike, dictionary: Dict[Any, Any]) -> None:
+def save_pkl_dictionary(pkl_fpath, dictionary: Dict[Any, Any]) -> None:
     """Save a Python dictionary to a file using pickle.
 
     Args:

@@ -90,6 +90,15 @@ class Calibration:
         self.T = self.extrinsic[0:3, 3]
 
         self.K = get_camera_intrinsic_matrix(calib["value"])
+
+        self.cu = self.calib_data["value"]["focal_center_x_px_"]
+        self.cv = self.calib_data["value"]["focal_center_y_px_"]
+        self.fu = self.calib_data["value"]["focal_length_x_px_"]
+        self.fv = self.calib_data["value"]["focal_length_y_px_"]
+
+        self.bx = self.K[0, 3] / (-self.fu)
+        self.by = self.K[1, 3] / (-self.fv)
+
         self.d = camera_config.distortion_coeffs
 
         self.camera = calib["key"][10:]
@@ -107,9 +116,6 @@ class Calibration:
         pts_3d_hom = np.hstack((pts_3d, np.ones((n, 1))))
         return pts_3d_hom
 
-    # ===========================
-    # ------- 3d to 2d ----------
-    # ===========================
     def project_ego_to_image(self, pts_3d_ego: np.array) -> np.ndarray:
         """Project egovehicle coordinate to image.
 
@@ -117,13 +123,11 @@ class Calibration:
             pts_3d_ego: nx3 points in egovehicle coord
 
         Returns:
-            nx2 points in image coord
+            nx3 points in image coord + depth
         """
 
-        uv_cam = self.extrinsic.dot(self.cart2hom(pts_3d_ego).transpose())
-        uv = self.K.dot(uv_cam)
-        uv[0:2, :] /= uv[2, :]
-        return uv.transpose()
+        uv_cam = self.project_ego_to_cam(pts_3d_ego)
+        return self.project_cam_to_image(uv_cam)
 
     def project_ego_to_cam(self, pts_3d_ego: np.array) -> np.ndarray:
         """Project egovehicle point onto camera frame.
@@ -148,11 +152,8 @@ class Calibration:
         Returns:
             np.array: nx3 points in ego coord.
         """
-        return np.linalg.inv((self.extrinsic)).dot(self.cart2hom(pts_3d_rect).transpose())
+        return np.linalg.inv((self.extrinsic)).dot(self.cart2hom(pts_3d_rect).transpose()).transpose()[:, 0:3]
 
-    # ===========================
-    # ------- 2d to 3d ----------
-    # ===========================
     def project_image_to_ego(self, uv_depth: np.array) -> np.ndarray:
         """ Project 2D image with depth to egovehicle coordinate.
 
@@ -163,8 +164,8 @@ class Calibration:
         Returns:
             nx3 points in ego coord.
         """
-
-        return np.linalg.inv(self.extrinsic).dot(self.cart2hom(uv_depth).transpose()).transpose()[:, 0:3]
+        uv_cam = self.project_image_to_cam(uv_depth)
+        return self.project_cam_to_ego(uv_cam)
 
     def project_image_to_cam(self, uv_depth: np.array) -> np.ndarray:
         """ Project 2D image with depth to camera coordinate.
@@ -177,7 +178,30 @@ class Calibration:
             nx3 points in camera coord.
         """
 
-        return uv_depth
+        n = uv_depth.shape[0]
+
+        x = ((uv_depth[:, 0] - self.cu) * uv_depth[:, 2]) / self.fu + self.bx
+        y = ((uv_depth[:, 1] - self.cv) * uv_depth[:, 2]) / self.fv + self.by
+
+        pts_3d_cam = np.zeros((n, 3))
+        pts_3d_cam[:, 0] = x
+        pts_3d_cam[:, 1] = y
+        pts_3d_cam[:, 2] = uv_depth[:, 2]
+        return pts_3d_cam
+
+    def project_cam_to_image(self, pts_3d_rect: np.array) -> np.ndarray:
+        """Project camera coordinate to image.
+
+        Args:
+            pts_3d_ego: nx3 points in egovehicle coord
+
+        Returns:
+            nx3 points in image coord + depth
+        """
+        uv_cam = self.cart2hom(pts_3d_rect).T
+        uv = self.K.dot(uv_cam)
+        uv[0:2, :] /= uv[2, :]
+        return uv.transpose()
 
 
 def load_image(img_filename: Union[str, Path]) -> np.ndarray:
@@ -207,7 +231,7 @@ def load_calib(calib_filepath: Union[str, Path]) -> Dict[Any, Calibration]:
     calib_list = {}
     for camera in CAMERA_LIST:
         cam_config = get_calibration_config(calib, camera)
-        calib_cam = next((c for c in calib["camera_data_"] if c["key"] == f"image_raw_{camera}"), None)
+        calib_cam = next((c for c in calib["camera_data_"] if c["key"] == "image_raw_"+camera), None)
 
         if calib_cam is None:
             continue
@@ -277,7 +301,7 @@ def get_calibration_config(calibration: Dict[str, Any], camera_name: str) -> Cam
             camera_calibration = camera_data["value"]
             break
     else:
-        raise ValueError(f"Unknown camera name: {camera_name}")
+        raise ValueError("Unknown camera name: "+camera_name)
 
     camera_extrinsic_matrix = get_camera_extrinsic_matrix(camera_calibration)
     camera_intrinsic_matrix = get_camera_intrinsic_matrix(camera_calibration)
@@ -289,7 +313,7 @@ def get_calibration_config(calibration: Dict[str, Any], camera_name: str) -> Cam
         img_width = RING_IMG_WIDTH
         img_height = RING_IMG_HEIGHT
     else:
-        raise ValueError(f"Unknown camera name: {camera_name}")
+        raise ValueError("Unknown camera name: "+camera_name)
 
     return CameraConfig(
         camera_extrinsic_matrix,

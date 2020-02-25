@@ -44,7 +44,7 @@ def find_closest_integer_in_ref_arr(query_int: int, ref_arr: np.ndarray) -> Tupl
         take the minimum value (to speed up this function).
 
         Args:
-            query_int: query integer, 
+            query_int: query integer,
             ref_arr: Numpy array of integers
 
         Returns:
@@ -89,12 +89,12 @@ class SynchronizationDB:
         logger.info("Building SynchronizationDB")
 
         if collect_single_log_id is None:
-            log_fpaths = glob.glob(f"{dataset_dir}/*")
+            log_fpaths = glob.glob(dataset_dir+"/*")
         else:
-            log_fpaths = [f"{dataset_dir}/{collect_single_log_id}"]
+            log_fpaths = [dataset_dir+"/"+str(collect_single_log_id)]
 
-        self.per_log_camtimestamps_index: Dict[str, Dict[str, np.ndarray]] = {}
-        self.per_log_lidartimestamps_index: Dict[str, np.ndarray] = {}
+        self.per_log_camtimestamps_index = {}
+        self.per_log_lidartimestamps_index = {}
 
         for log_fpath in log_fpaths:
             log_id = Path(log_fpath).name
@@ -102,12 +102,12 @@ class SynchronizationDB:
             self.per_log_camtimestamps_index[log_id] = {}
             for camera_name in STEREO_CAMERA_LIST + RING_CAMERA_LIST:
 
-                sensor_folder_wildcard = f"{dataset_dir}/{log_id}/{camera_name}/{camera_name}_*.jpg"
+                sensor_folder_wildcard = dataset_dir+"/"+str(log_id)+"/"+camera_name+"/"+camera_name+"_*.jpg"
                 cam_timestamps = get_timestamps_from_sensor_folder(sensor_folder_wildcard)
 
                 self.per_log_camtimestamps_index[log_id][camera_name] = cam_timestamps
 
-            sensor_folder_wildcard = f"{dataset_dir}/{log_id}/lidar/PC_*.ply"
+            sensor_folder_wildcard = dataset_dir+"/"+str(log_id)+"/"+"lidar/PC_*.ply"
             lidar_timestamps = get_timestamps_from_sensor_folder(sensor_folder_wildcard)
             self.per_log_lidartimestamps_index[log_id] = lidar_timestamps
 
@@ -172,14 +172,18 @@ class SynchronizationDB:
         closest_cam_ch_timestamp, timestamp_diff = find_closest_integer_in_ref_arr(lidar_timestamp, cam_timestamps)
         if timestamp_diff > self.MAX_LIDAR_RING_CAM_TIMESTAMP_DIFF and camera_name in RING_CAMERA_LIST:
             # convert to nanoseconds->milliseconds for readability
-            logger.error(
-                "No corresponding image: %s > %s ms", timestamp_diff / 1e6, self.MAX_LIDAR_RING_CAM_TIMESTAMP_DIFF / 1e6
+            logger.warning(
+                "No corresponding ring image at %s: %s > %s ms",
+                lidar_timestamp,
+                timestamp_diff / 1e6,
+                self.MAX_LIDAR_RING_CAM_TIMESTAMP_DIFF / 1e6,
             )
             return None
         elif timestamp_diff > self.MAX_LIDAR_STEREO_CAM_TIMESTAMP_DIFF and camera_name in STEREO_CAMERA_LIST:
             # convert to nanoseconds->milliseconds for readability
-            logger.error(
-                "No corresponding image: %s > %s ms",
+            logger.warning(
+                "No corresponding stereo image at %s: %s > %s ms",
+                lidar_timestamp,
                 timestamp_diff / 1e6,
                 self.MAX_LIDAR_STEREO_CAM_TIMESTAMP_DIFF / 1e6,
             )

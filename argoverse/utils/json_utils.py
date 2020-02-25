@@ -6,7 +6,7 @@ import os
 from typing import Any, Dict, Union
 
 
-def read_json_file(fpath: Union[str, "os.PathLike[str]"]) -> Any:
+def read_json_file(fpath) -> Any:
     """Load dictionary from JSON file.
 
     Args:
@@ -15,11 +15,11 @@ def read_json_file(fpath: Union[str, "os.PathLike[str]"]) -> Any:
     Returns:
         Deserialized Python dictionary.
     """
-    with open(fpath, "rb") as f:
+    with open(str(fpath)) as f:
         return json.load(f)
 
 
-def save_json_dict(json_fpath: Union[str, "os.PathLike[str]"], dictionary: Dict[Any, Any]) -> None:
+def save_json_dict(json_fpath, dictionary: Dict[Any, Any]) -> None:
     """Save a Python dictionary to a JSON file.
 
     Args:

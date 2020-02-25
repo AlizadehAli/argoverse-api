@@ -24,9 +24,9 @@ def get_city_SE3_egovehicle_at_sensor_t(sensor_timestamp: int, dataset_dir: str,
         Returns:
             SE3 for translating city coordinates to ego vehicle coordinates if found, else None.
     """
-    pose_fpath = f"{dataset_dir}/{log_id}/poses/city_SE3_egovehicle_{sensor_timestamp}.json"
+    pose_fpath = dataset_dir+"/"+str(log_id)+"/poses/city_SE3_egovehicle_"+str(sensor_timestamp)+".json"
     if not Path(pose_fpath).exists():
-        logger.error(f"missing pose {sensor_timestamp}")
+        logger.error("missing pose "+str(sensor_timestamp))
         return None
 
     pose_city_to_ego = read_json_file(pose_fpath)

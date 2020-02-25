@@ -12,6 +12,8 @@ from argoverse.map_representation.lane_segment import LaneSegment
 
 from . import mpl_plotting_utils
 from .interpolate import interp_arc
+import warnings
+warnings.simplefilter('ignore', np.RankWarning)
 
 
 def swap_left_and_right(
@@ -96,7 +98,7 @@ def centerline_to_polygon(
         plt.scatter(right_centerline[:, 0], right_centerline[:, 1], 20, marker=".", color="r")
         plt.scatter(left_centerline[:, 0], left_centerline[:, 1], 20, marker=".", color="g")
         fname = datetime.datetime.utcnow().strftime("%Y_%m_%d_%H_%M_%S_%f")
-        plt.savefig(f"polygon_unit_tests/{fname}.png")
+        plt.savefig("polygon_unit_tests/"+fname+".png")
         plt.close("all")
 
     # return the polygon
@@ -257,7 +259,8 @@ def get_nt_distance(xy: np.ndarray, centerline: np.ndarray, viz: bool = False) -
 
     delta_offset = 0.01
     last = 0
-    max_dist: float = -1
+    # max_dist: float = -1
+    max_dist = -1
 
     for i in range(traj_len):
         tang_dist, norm_dist = get_normal_and_tangential_distance_point(xy[i][0], xy[i][1], centerline, last=False)
@@ -360,7 +363,8 @@ def remove_overlapping_lane_seq(lane_seqs: Sequence[Sequence[int]]) -> List[Sequ
     Returns:
         List of sequence of lane ids (e.g. ``[[12345, 12346, 12347], [12345, 12348]]``)
     """
-    redundant_lane_idx: Set[int] = set()
+    # redundant_lane_idx: Set[int] = set()
+    redundant_lane_idx = set()
     for i in range(len(lane_seqs)):
         for j in range(len(lane_seqs)):
             if i in redundant_lane_idx or i == j:
@@ -385,8 +389,10 @@ def lane_waypt_to_query_dist(
     Returns:
        Tuple of (per_lane_dists, min_dist_nn_indices, dense_centerlines); all numpy arrays
     """
-    per_lane_dists: List[float] = []
-    dense_centerlines: List[np.ndarray] = []
+    # per_lane_dists: List[float] = []
+    # dense_centerlines: List[np.ndarray] = []
+    per_lane_dists = []
+    dense_centerlines = []
     for nn_idx, lane_obj in enumerate(nearby_lane_objs):
         centerline = lane_obj.centerline
         # densely sample more points
