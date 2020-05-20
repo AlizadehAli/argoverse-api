@@ -14,24 +14,25 @@ from argoverse.utils.centerline_utils import (
     remove_overlapping_lane_seq,
 )
 
-base_name = 'test_obs'
-# base_name = 'forecasting_sample'
+# base_name = 'test_obs'
+base_name = 'forecasting_sample'
 
-dataset_dir = '/home/jean/Tensorflow/Argoverse/'+base_name+'/dataset/'
+# dataset_dir = '/home/jean/Tensorflow/Argoverse/'+base_name+'/dataset/'
+dataset_dir = './'+base_name+'/dataset/'
 
-root_dir = '/home/jean/Tensorflow/Argoverse/'+base_name+'/data/'
-target_dir = '/home/jean/Tensorflow/Argoverse/'+base_name + '_lanes/data/'
+# root_dir = '/home/jean/Tensorflow/Argoverse/'+base_name+'/data/'
+# target_dir = '/home/jean/Tensorflow/Argoverse/'+base_name + '_lanes/data/'
+root_dir = './'+base_name+'/data/'
+target_dir = './'+base_name + '/data2/'
 
-afl = ArgoverseForecastingLoader(root_dir)
-avm = ArgoverseMap()
 obs_len = 20
 
-pool_size = 10
+pool_size = 2
 
 def produce_lane_files(idx):
     print("Process ", idx)
     len_data = len(afl)
-    size = len_data // (pool_size - 1)
+    size = len_data
     beg = idx*size
     end = min(beg + size, len_data)
     print("Loop between", beg, end)
@@ -62,12 +63,7 @@ def produce_lane_files(idx):
         lanes_df.to_csv(target_dir + data.current_seq.name)
         print("saved", target_dir+data.current_seq.name)
 
-# produce_lane_files(0)
-pool = multiprocessing.Pool(pool_size)
-pool.map(produce_lane_files, np.arange(pool_size))
 
-dataset = ArgoDataset(root_dir, target_dir, random_rotation=False, random_translation=False, get_id=True)
-len_dataset = len(dataset)
 
 
 def produce_dataset_temp(name, idx_list):
@@ -100,17 +96,13 @@ def map_produce_dataset(idx):
     produce_dataset_temp(name, list)
 
 
-pool = multiprocessing.Pool(pool_size)
-pool.map(map_produce_dataset, np.arange(pool_size))
-
-
 def merge_dataset():
     with open(dataset_dir + 'dataset.pickle', "wb") as dataset_file:
         traj = []
         mask_traj = []
         lanes = []
         mask_lanes = []
-        for i in range(pool_size):
+        for i in range(1):
             print(i)
             with open(dataset_dir + str(i) + '_temp.pickle', 'rb') as handle:
                 data_temp = pickle.load(handle)
@@ -121,4 +113,16 @@ def merge_dataset():
         pickle.dump({'traj':traj, 'mask_traj':mask_traj,
                      'lanes': lanes, 'mask_lanes': mask_lanes}, dataset_file,
                     protocol=pickle.HIGHEST_PROTOCOL)
-# merge_dataset()
+
+if __name__ == '__main__':
+    afl = ArgoverseForecastingLoader(root_dir)
+    avm = ArgoverseMap()
+    produce_lane_files(0)
+    dataset = ArgoDataset(root_dir, target_dir, random_rotation=False, random_translation=False, get_id=True)
+    len_dataset = len(dataset)
+    # pool = multiprocessing.Pool(pool_size)
+    # pool.map(map_produce_dataset, np.arange(pool_size))
+    beg = 0
+    end = len(afl)
+    produce_dataset_temp('data+lanes', np.arange(beg, end))
+    merge_dataset()

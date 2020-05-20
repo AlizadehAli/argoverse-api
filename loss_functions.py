@@ -278,6 +278,71 @@ def multiDPP(y_pred, mask):
     loss = -torch.sum(loss_mat) / torch.sum(mask)
     return loss
 
+
+def probabilityMatrix(dx, dy, sigx, sigy, rho):
+    eps = torch.tensor((np.arange(30)/15).astype('float32')).view(30, 1, 1, 1, 1, 1)
+    if torch.cuda.is_available():
+        eps = eps.cuda()
+    eps = torch.clamp(eps, 0.5, 2)
+    fracx = dx/sigx
+    fracy = dy/sigy
+    ohr = 1/(1-rho*rho)
+
+    p = torch.sqrt(ohr)*torch.exp(-0.5*ohr*(fracx*fracx + fracy*fracy - 2*rho*fracx*fracy))/(sigx*sigy)
+    # p.masked_fill(sigx + sigy <= 2*eps, 0)
+    return p
+
+def logpMatrix(dx, dy, sigx, sigy, rho):
+    eps = torch.tensor((np.arange(30)/15).astype('float32')).view(30, 1, 1, 1, 1, 1)
+    if torch.cuda.is_available():
+        eps = eps.cuda()
+    eps = torch.clamp(eps, 0.5, 2)
+    fracx = dx/sigx
+    fracy = dy/sigy
+    ohr = 1/(1-rho*rho)
+
+    p = 0.5*torch.log(ohr)-0.5*ohr*(fracx*fracx + fracy*fracy - 2*rho*fracx*fracy) - torch.log(sigx*sigy)
+    # p.masked_fill(sigx + sigy <= 2*eps, 0)
+    return p
+
+
+def multiP(y_pred, mask):
+    y = y_pred.narrow(4, 0, 2)
+    y = y[-1:]
+    n_pred = y_pred.shape[3]
+
+    # y_true = y_true.unsqueeze(3).repeat((1, 1, 1, n_pred, 1))
+    #
+    # diff = y_true - y
+    # dist_true = torch.sum(diff * diff, 4, keepdims=True)
+    # mean_dist_true = torch.sum(p * dist_true, 3, keepdims=True)
+
+    distance_matrix = y.unsqueeze(4).repeat((1, 1, 1, 1, n_pred, 1))
+    distance_matrix = distance_matrix - distance_matrix.transpose(4, 3)
+
+    dx = distance_matrix.narrow(5, 0, 1).clamp(-2, 2)
+    dy = distance_matrix.narrow(5, 1, 1).clamp(-2, 2)
+    sigX = y_pred.narrow(4, 2, 1)
+    sigY = y_pred.narrow(4, 3, 1)
+    rho = y_pred.narrow(4, 4, 1)
+
+    sigX = sigX.unsqueeze(4).repeat((1, 1, 1, 1, n_pred, 1))
+    sigY = sigY.unsqueeze(4).repeat((1, 1, 1, 1, n_pred, 1))
+    rho = rho.unsqueeze(4).repeat((1, 1, 1, 1, n_pred, 1))
+
+    p1 = logpMatrix(dx, dy, sigX, sigY, rho)
+    p2 = logpMatrix(dx, dy, sigX.transpose(4, 3), sigY.transpose(4, 3), rho.transpose(4, 3))
+    if torch.cuda.is_available():
+        I = torch.eye(n_pred).cuda()
+    else:
+        I = torch.eye(n_pred)
+    I = 1 - I.view(1, 1, 1, n_pred, n_pred, 1)
+    loss = torch.mean((p1 + p2)*I, dim=(3, 4, 5))
+    loss = torch.sum(loss*mask)/torch.sum(mask)
+
+    return loss
+
+
 #
 # def multiDPP(y_pred, mask):
 #     eps = 1e-3
@@ -394,6 +459,8 @@ def multiNLLBest(y_pred, y_gt, mask, dim_feature=4, sig_penalisation=1):
         lossVal = torch.sum(nll) / torch.sum(mask)
         p_loss = p_loss.masked_fill(mask == 0, 0)
         p_loss = torch.sum(p_loss) / torch.sum(mask)
+    if torch.isnan(p_loss).any():
+        return lossVal
     return lossVal + p_loss
 
 
@@ -557,4 +624,111 @@ def missRate(y_pred, y_gt, mask, dim=4):
         output = torch.mean((min_fde > 4))
 
     return output
+
+@jit.script
+def missLoss(y_pred, y_gt, mask, dim=4):
+    # type: (Tensor, Tensor, Tensor, int) -> Tensor
+    y_gt = y_gt.unsqueeze(dim - 1)
+    muX = y_pred.narrow(dim, 0, 1)
+    muY = y_pred.narrow(dim, 1, 1)
+    x = y_gt.narrow(dim, 0, 1)
+    y = y_gt.narrow(dim, 1, 1)
+    diff_x = x[-1] - muX[-1]
+    diff_y = y[-1] - muY[-1]
+
+    dist = (diff_x * diff_x + diff_y * diff_y)
+    min_fde, arg_min_fde = torch.min(dist, 2)
+    min_fde = torch.sqrt(min_fde)
+    missLoss = torch.masked_fill(min_fde, min_fde > 2, 2)-2
+    if mask is not None:
+        mask = mask[-1].unsqueeze(dim - 2)
+        missLoss = torch.masked_fill(missLoss, mask == 0, 0)
+        output = torch.sum(missLoss) / torch.sum(mask.float())
+    else:
+        output = torch.mean(missLoss)
+
+    return output
+
+
+def xytheta_nll(pred, truth, mask, dim):
+    eps = 1e-1  # 10cm std is ok
+    eps_rho = 1e-1
+
+    x_pred = pred.narrow(dim, 0, 1)
+    y_pred = pred.narrow(dim, 1, 1)
+    theta_pred = pred.narrow(dim, 2, 1)
+    sx = torch.clamp(pred.narrow(dim, 3, 1), eps, None)
+    sy = torch.clamp(pred.narrow(dim, 4, 1), eps, None)
+    st = torch.clamp(pred.narrow(dim, 5, 1), eps, None)
+    rxy = torch.clamp(pred.narrow(dim, 6, 1), eps_rho - 1, 1 - eps_rho)
+    rxt = torch.clamp(pred.narrow(dim, 7, 1), eps_rho - 1, 1 - eps_rho)
+    ryt = torch.clamp(pred.narrow(dim, 8, 1), eps_rho - 1, 1 - eps_rho)
+    p = pred.narrow(dim, 9, 1)
+
+    dx = x_pred - truth.narrow(dim-1, 0, 1).unsqueeze(dim-1)
+    dy = y_pred - truth.narrow(dim-1, 1, 1).unsqueeze(dim-1)
+    dt = theta_pred - truth.narrow(dim-1, 2, 1).unsqueeze(dim-1)
+
+    rmul = torch.clamp((1 + 2 * rxy * rxt * ryt - rxy * rxy - rxt * rxt - ryt * ryt), eps, None)
+    # det = sx * sx * sy * sy * st * st * rmul
+    log_det = 2*(torch.log(sx) + torch.log(sy) + torch.log(st)) + torch.log(rmul)
+
+    isx = (1 - ryt * ryt) / (sx * sx)
+    isy = (1 - rxt * rxt) / (sy * sy)
+    ist = (1 - rxy * rxy) / (st * st)
+    isxy = (rxt * ryt - rxy) / (sx * sy)
+    isxt = (rxy * ryt - rxt) / (sx * st)
+    isyt = (rxy * rxt - ryt) / (sy * st)
+
+    dxs = dx * (isx * dx + isxy * dy + isxt * dt)
+    dys = dy * (isxy * dx + isy * dy + isyt * dt)
+    dts = dt * (isxt * dx + isyt * dy + ist * dt)
+
+    mahal = (dxs + dys + dts) / rmul
+    nll = 0.5 * (3*np.log(2*np.pi) + log_det + mahal)
+
+    ll = - nll + torch.log(p)
+    ll = ll.squeeze(-1)
+    nll = -logsumexp(ll, mask, dim=dim - 1)
+
+    if torch.sum(mask) > 0:
+        nll = torch.sum(nll*mask) / torch.sum(mask)
+    else:
+        nll = torch.mean(nll)
+
+    return nll
+
+
+def xytheta_activation(h, dim):
+    x = h.narrow(dim, 0, 1)
+    y = h.narrow(dim, 1, 1)
+    theta = np.pi * torch.tanh(h.narrow(dim, 2, 1))
+    sx = torch.exp(h.narrow(dim, 3, 1))
+    sy = torch.exp(h.narrow(dim, 4, 1))
+    st = torch.exp(h.narrow(dim, 5, 1))
+    rxy = torch.tanh(h.narrow(dim, 6, 1))
+    rxt = torch.tanh(h.narrow(dim, 7, 1))
+    ryt = torch.tanh(h.narrow(dim, 8, 1))
+    p = h.narrow(dim, -1, 1)
+    n_pred = p.shape[dim - 1]
+    p = (p / np.sqrt(n_pred)).softmax(dim - 1)
+
+    return torch.cat((x, y, theta, sx, sy, st, rxy, rxt, ryt, p), dim=dim)
+
+
+def xytheta2xy(h, dim):
+    x = h.narrow(dim, 0, 1)
+    y = h.narrow(dim, 1, 1)
+    sx = h.narrow(dim, 3, 1)
+    sy = h.narrow(dim, 4, 1)
+    rxy = h.narrow(dim, 6, 1)
+    p = h.narrow(dim, -1, 1)
+
+    return torch.cat((x, y, sx, sy, rxy, p), dim=dim)
+
+
+
+
+
+
 

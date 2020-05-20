@@ -17,4 +17,4 @@ def assert_np_array_shape(array: np.ndarray, target_shape: Sequence[Optional[int
     """
     for index_dim, (array_shape_dim, target_shape_dim) in enumerate(zip(array.shape, target_shape)):
         if target_shape_dim and array_shape_dim != target_shape_dim:
-            raise ValueError("array.shape["+str(index_dim)+"]: "+array_shape_dim+" != "+str(target_shape_dim)+".")
+            raise ValueError("array.shape["+str(index_dim)+"]: "+str(array_shape_dim)+" != "+str(target_shape_dim)+".")

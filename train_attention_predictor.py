@@ -4,7 +4,9 @@ from dataset_loader import ArgoDataset
 from torch.utils.data import DataLoader
 from torch.optim import Adam, SGD
 
-from loss_functions import multiMSE, multiNLL, multiADE, multiFDE, minADE, minFDE, missRate, multiNLLBest, multiDPP
+from loss_functions import multiMSE, multiNLL, multiADE, multiFDE, minADE, minFDE, missRate, missLoss
+from loss_functions import multiNLLBest, multiDPP, multiP
+from loss_functions import xytheta_nll, xytheta2xy
 from get_model import get_model
 
 import torch
@@ -35,9 +37,9 @@ class AttentionPredictionTrainer:
             train_set = ArgoDataset(train_dataset_dir, normalize=True, random_translation=True, random_rotation=True)
             val_set = ArgoDataset(val_dataset_dir, normalize=True)
         self.train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
-                                        num_workers=8, collate_fn=train_set.collate_fn)
+                                        num_workers=0, collate_fn=train_set.collate_fn)
         self.val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=True,
-                                        num_workers=8, collate_fn=train_set.collate_fn)
+                                        num_workers=0, collate_fn=train_set.collate_fn)
         files_to_copy = ['train_attention_predictor.py', 'attention_predictor.py', 'dataset_loader.py',
                          'loss_functions.py', 'get_model.py', 'attention.py']
         if load_model_name is not None:
@@ -64,14 +66,7 @@ class AttentionPredictionTrainer:
         self.n_data = len(self.train_loader)
         self.n_val_data = len(self.val_loader)
 
-        self.avg_nll = 0
-        self.avg_mse = 0
-        self.avg_ade = 0
-        self.avg_min_ade = 0
-        self.avg_fde = 0
-        self.avg_min_fde = 0
-        self.avg_miss_rate = 0
-        self.metric_itemized = False
+        self._reset_avg_metrics()
 
         self.current_traj_past  = None
         self.current_traj_fut   = None
@@ -86,14 +81,16 @@ class AttentionPredictionTrainer:
         self.avg_mse = 0
         self.avg_ade = 0
         self.avg_fde = 0
+        self.avg_p = 0
         self.avg_min_ade = 0
         self.avg_min_fde = 0
         self.avg_miss_rate = 0
+        self.avg_loss = 0
         self.metric_itemized = False
 
     def _get_current_batch(self, data):
         self.current_traj_past, self.current_traj_fut, self.current_mask_past,\
-        self.current_mask_fut, self.current_lanes, self.current_mask_lanes = data
+        self.current_mask_fut, self.current_lanes, self.current_mask_lanes, angle, mean_pos = data
         if self.is_cuda:
             self.current_traj_past  = self.current_traj_past.cuda()
             self.current_traj_fut   = self.current_traj_fut.cuda()
@@ -104,26 +101,33 @@ class AttentionPredictionTrainer:
 
     def _get_loss(self, only_agent=False):
         if only_agent:
-            current_prediction = self.current_prediction[:, :, 0:1, :, :].clone()
-            current_traj_fut = self.current_traj_fut[:, :, 0:1, :].clone()
+            current_prediction = xytheta2xy(self.current_prediction[:, :, 0:1, :, :], 4).clone()
+            current_traj_fut = self.current_traj_fut[:, :, 0:1, :2].clone()
             current_mask_fut = self.current_mask_fut[:, :, 0:1].clone()
-            loss = multiNLLBest(current_prediction,
-                            current_traj_fut,
-                            current_mask_fut)# + multiDPP(current_prediction, current_mask_fut)
+            # loss = xytheta_nll(current_prediction,
+            #                    current_traj_fut,
+            #                    current_mask_fut, 4)
+            loss = multiNLLBest(current_prediction, current_traj_fut, current_mask_fut, 4)# + multiP(current_prediction, current_mask_fut)
         else:
-            loss = multiNLLBest(self.current_prediction, self.current_traj_fut, self.current_mask_fut)# +\
-                  # multiDPP(self.current_prediction, self.current_mask_fut)
+            current_prediction = xytheta2xy(self.current_prediction, 4).clone()
+            current_traj_fut = self.current_traj_fut[:, :, :, :2].clone()
+            current_mask_fut = self.current_mask_fut.clone()
+            multip = multiP(current_prediction, current_mask_fut)
+            loss = multiNLLBest(current_prediction, current_traj_fut, current_mask_fut, 4)\
+                   + missLoss(current_prediction, current_traj_fut, current_mask_fut, 4)
+            if not isnan(multip):
+                loss += 0.0001*multip
         if isnan(loss):
             print("Loss value is Nan.")
             assert False
         return loss
 
-    def _update_avg_metrics(self):
+    def _update_avg_metrics(self, loss=0):
         if self.metric_itemized:
             print("Average metrics implicitely reset.")
             self._reset_avg_metrics()
-        current_prediction = self.current_prediction[:, :, 0:1, :, :].detach().clone()
-        current_traj_fut = self.current_traj_fut[:, :, 0:1, :].detach().clone()
+        current_prediction = xytheta2xy(self.current_prediction[:, :, 0:1, :, :], 4).detach().clone()
+        current_traj_fut = self.current_traj_fut[:, :, 0:1, :2].detach().clone()
         current_mask_fut = self.current_mask_fut[:, :, 0:1].detach().clone()
         self.avg_nll = self.avg_nll + multiNLL(current_prediction,
                                                current_traj_fut,
@@ -140,12 +144,14 @@ class AttentionPredictionTrainer:
         self.avg_fde = self.avg_fde + multiFDE(current_prediction,
                                                current_traj_fut,
                                                current_mask_fut)
+        self.avg_p = self.avg_p + multiP(current_prediction, current_mask_fut)
         self.avg_min_fde = self.avg_min_fde + minFDE(current_prediction,
                                                      current_traj_fut,
                                                      current_mask_fut)
         self.avg_miss_rate = self.avg_miss_rate + missRate(current_prediction,
                                                            current_traj_fut,
                                                            current_mask_fut)
+        self.avg_loss = self.avg_loss + loss
 
 
     def _itemize_avg_metrics(self):
@@ -153,6 +159,7 @@ class AttentionPredictionTrainer:
         self.avg_mse = self.avg_mse.item()
         self.avg_ade = self.avg_ade.item()
         self.avg_fde = self.avg_fde.item()
+        self.avg_p = self.avg_p.item()
         self.avg_min_ade = self.avg_min_ade.item()
         self.avg_min_fde = self.avg_min_fde.item()
         self.avg_miss_rate = self.avg_miss_rate.item()
@@ -169,16 +176,20 @@ class AttentionPredictionTrainer:
             prefix = ''
             denom = 100
             progress = batch / self.n_data * 100
-        print("Epoch no:", epoch, "| progress(%):",
-              format(progress, '0.2f'),
-              '| ' + prefix +'nll:', format(self.avg_nll / denom, '0.2f'),
-              '| ' + prefix +'mse:', format(self.avg_mse / denom, '0.2f'),
-              '| ' + prefix +'ade:', format(self.avg_ade / denom, '0.2f'),
-              '| ' + prefix +'min_ade:', format(self.avg_min_ade / denom, '0.2f'),
-              '| ' + prefix +'fde:', format(self.avg_fde / denom, '0.2f'),
-              '| ' + prefix +'min_fde:', format(self.avg_min_fde / denom, '0.2f'),
-              '| ' + prefix +'miss_rate:', format(self.avg_miss_rate / denom, '0.2f')
-              )
+        to_print = "Epoch no:"+ str(epoch) + "| progress(%):"+\
+              format(progress, '0.2f')+\
+              '| ' + prefix +'nll: ' + format(self.avg_nll / denom, '0.2f')+\
+              '| ' + prefix +'mse: ' + format(self.avg_mse / denom, '0.2f')+\
+              '| ' + prefix +'ade: ' + format(self.avg_ade / denom, '0.2f')+\
+              '| ' + prefix +'min_ade: ' + format(self.avg_min_ade / denom, '0.2f')+\
+              '| ' + prefix +'fde: ' + format(self.avg_fde / denom, '0.2f')+\
+              '| ' + prefix +'min_fde: ' + format(self.avg_min_fde / denom, '0.2f')+\
+              '| ' + prefix +'self-similarity: ' + format(self.avg_p / denom, '0.2f')+\
+              '| ' + prefix +'miss_rate: ' + format(self.avg_miss_rate / denom, '0.2f')
+        if self.avg_loss != 0:
+            to_print += '| ' + prefix +'loss:' + format(self.avg_loss / denom, '0.2f')
+        print(to_print)
+
 
     def _log(self, batch_num, is_val=False):
         if is_val:
@@ -196,6 +207,7 @@ class AttentionPredictionTrainer:
                 prefix+'fde': self.avg_fde / denom,
                 prefix+'min_ade': self.avg_min_ade / denom,
                 prefix+'min_fde': self.avg_min_fde / denom,
+                prefix+'self-similarity': self.avg_p / denom,
                 prefix+'miss_rate': self.avg_miss_rate / denom
                 }
         for key, value in info.items():
@@ -222,11 +234,11 @@ class AttentionPredictionTrainer:
         return self.current_prediction
 
     def _step(self, loss):
-        # if not isnan(loss):
-        self.optimizer.zero_grad()
-        loss.backward()
-        # torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1)
-        self.optimizer.step()
+        if not isnan(loss):
+            self.optimizer.zero_grad()
+            loss.backward()
+            # torch.nn.utils.clip_grad_norm_(self.net.parameters(), 0.1)
+            self.optimizer.step()
 
     def _validation(self, epoch):
         print('                  ################### Validation ####################')
@@ -251,8 +263,8 @@ class AttentionPredictionTrainer:
             for batch, data in enumerate(self.train_loader):
                 self._get_current_batch(data)
                 self._predict()
-                self._update_avg_metrics()
-                nll = self._get_loss(only_agent=True)
+                nll = self._get_loss(only_agent=False)
+                self._update_avg_metrics(nll)
                 self._step(nll)
                 if batch%100 == 99:
                     self._save_model()
@@ -261,21 +273,21 @@ class AttentionPredictionTrainer:
                     self._reset_avg_metrics()
             self._validation(epoch)
 
+if __name__ == '__main__':
+    trainer = AttentionPredictionTrainer(
+        # train_dataset_dir='forecasting_sample/dataset2/',
+        # val_dataset_dir='forecasting_sample/dataset2/',
+        # out_model_name='test',
+        train_dataset_dir='train/dataset2/',
+        val_dataset_dir='val/dataset2/',
+        out_model_name='model_sumAttention_122_loopy_15_6',
+        batch_size=32,
+        n_epoch=400,
+        lr=0.0003,
+        log_dir='runs/',
+        load_model_name='model_sumAttention_122_loopy_15_5',
+        train_for_open_loop=False
+        )
 
-trainer = AttentionPredictionTrainer(
-    # train_dataset_dir='forecasting_sample/dataset2/',
-    # val_dataset_dir='forecasting_sample/dataset2/',
-    # out_model_name='test',
-    train_dataset_dir='train/dataset2/',
-    val_dataset_dir='val/dataset2/',
-    out_model_name='model_sumAttention_best_122_bidir_4_ter',
-    batch_size=32,
-    n_epoch=400,
-    lr=0.0003,
-    log_dir='runs/',
-    load_model_name="model_sumAttention_best_122_bidir_4_bis",
-    train_for_open_loop=False
-    )
-
-trainer.train()
+    trainer.train()
 

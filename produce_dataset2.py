@@ -12,13 +12,13 @@ import multiprocessing
 ##set root_dir to the correct path to your dataset folder
 # root_dir = 'val/data/'
 # target_dir = 'val/dataset/'
-# root_dir = 'forecasting_sample/data/'
-# target_dir = 'forecasting_sample/dataset'
+root_dir = 'forecasting_sample/data/'
+target_dir = 'forecasting_sample/dataset2'
 # root_dir = 'val/data'
-root_dir = 'test_obs/data/'
-target_dir = 'test_obs/dataset/'
+# root_dir = 'test_obs/data/'
+# target_dir = 'test_obs/dataset/'
 
-pool_size = 10
+pool_size = 1
 max_num_lanes = 5
 max_size_lane = 70
 dist_max = 30
@@ -154,6 +154,10 @@ def map_produce_dataset(idx):
     name = str(idx)
     save_dataset_part(list, name)
 
+if __name__ == '__main__':
 
-pool = multiprocessing.Pool(pool_size)
-pool.map(map_produce_dataset, np.arange(pool_size))
+    beg = 0
+    end = len(afl)
+    save_dataset_part(np.arange(beg, end), 'data+lanes')
+    # pool = multiprocessing.Pool(pool_size)
+    # pool.map(map_produce_dataset, np.arange(pool_size))

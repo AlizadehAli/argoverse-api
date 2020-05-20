@@ -6,30 +6,35 @@ import math
 
 # from attention import attention, LaneAttention, SocialAttention
 from activation import Mish
+from loss_functions import xytheta_activation
 
 import os
 from pydoc import locate
-current_file = os.path.dirname(__file__)
-current_path = os.getcwd()
+from attention import LaneRelationalAttention, SocialRelationalAttention, \
+    geometric_relational_attention, relational_attention, geometric_attention
 
-current_file = current_file.replace(current_path, '').replace("/", ".")[1:]
-LaneRelationalAttention = locate(current_file + ".attention.LaneRelationalAttention")
-SocialRelationalAttention = locate(current_file + ".attention.SocialRelationalAttention")
-geometric_relational_attention = locate(current_file + ".attention.geometric_relational_attention")
-relational_attention = locate(current_file + ".attention.relational_attention")
-geometric_attention = locate(current_file + ".attention.geometric_attention")
+# current_file = os.path.dirname(__file__)
+# current_path = os.getcwd()
+#
+# current_file = current_file.replace(current_path, '').replace("/", ".")[1:]
+# LaneRelationalAttention = locate(current_file + ".attention.LaneRelationalAttention")
+# SocialRelationalAttention = locate(current_file + ".attention.SocialRelationalAttention")
+# geometric_relational_attention = locate(current_file + ".attention.geometric_relational_attention")
+# relational_attention = locate(current_file + ".attention.relational_attention")
+# geometric_attention = locate(current_file + ".attention.geometric_attention")
 
 
 class ParametersAttentionPredictor():
     def __init__(self):
-        self.feature_size = 120
-        self.lane_feature_size = 120
+        self.feature_size = 60
+        self.lane_feature_size = 60
         self.n_heads_past = 6
         self.n_heads_fut = 6
-        self.n_heads_lanes = 12
+        self.n_heads_lanes = 6
         self.num_preds = 6
-        self.n_lane_layers = 1
-        self.n_layers = 1
+        self.n_lane_layers = 2
+        self.n_layers = 2
+        self.n_loop = 1
 
 class Embedding(nn.Module):
 
@@ -122,10 +127,11 @@ class MultiOutputLayer(nn.Module):
         super(MultiOutputLayer, self).__init__()
         self.feature_size = feature_size
         self.num_preds = num_preds
+        self.state_size = 10
 
         self.layer1 = nn.Conv2d(self.feature_size, self.feature_size, (1, 1))
         self.layer2 = nn.Conv2d(self.feature_size, self.feature_size, (1, 1))
-        self.output = nn.Conv2d(self.feature_size, 6 * num_preds, (1, 1))
+        self.output = nn.Conv2d(self.feature_size, self.state_size * num_preds, (1, 1))
 
         self.activation = Mish
 
@@ -136,8 +142,8 @@ class MultiOutputLayer(nn.Module):
         h = self.activation(self.layer2(h))
         # h = inputs
         h = self.output(h).permute(3, 0, 2, 1).view(inputs_shape[3], inputs_shape[0],
-                                                    inputs_shape[2], self.num_preds, 6)
-        output = outputActivation(pos, h, 4)
+                                                    inputs_shape[2], self.num_preds, self.state_size)
+        output = xytheta_activation(h, 4)
         return output
 
 
@@ -218,17 +224,22 @@ class AttentionPredictor(nn.Module, ParametersAttentionPredictor):
         self.pos_embedding = nn.Linear(2, self.feature_size)
         self.lane_embedding = LaneEmbedding(self.lane_feature_size, self.n_lane_layers)
 
-        self.lane_attention = jit.script(LaneRelationalAttention(self.feature_size, self.lane_feature_size, self.n_heads_lanes))
-        self.social_attention = jit.script(SocialRelationalAttention(self.feature_size, self.n_heads_past))
+        self.lane_attention = LaneRelationalAttention(self.feature_size, self.lane_feature_size, self.n_heads_lanes)
+        self.social_attention = SocialRelationalAttention(self.feature_size, self.n_heads_past)
         # self.lane_attention =LaneRelationalAttention(self.feature_size, self.lane_feature_size, self.n_heads_lanes)
         # self.social_attention = SocialRelationalAttention(self.feature_size, self.n_heads_past)
-        self.layer_norm = nn.LayerNorm(self.feature_size)
+        # self.layer_norm = nn.LayerNorm(self.feature_size)
 
         self.pred_LSTM = nn.LSTM(self.feature_size, self.feature_size, num_layers=self.n_layers)
         if self.separate_ego:
             self.pred_LSTM_ego = nn.LSTM(self.feature_size, self.feature_size, num_layers=self.n_layers)
-        self.lane_attention_fut = jit.script(LaneRelationalAttention(self.feature_size, self.lane_feature_size, self.n_heads_lanes))
-        self.social_attention_fut = jit.script(SocialRelationalAttention(self.feature_size, self.n_heads_past))
+        # self.lane_attention_fut = jit.script(LaneRelationalAttention(self.feature_size, self.lane_feature_size, self.n_heads_lanes))
+        # self.social_attention_fut = jit.script(SocialRelationalAttention(self.feature_size, self.n_heads_past))
+
+        if self.n_loop > 0:
+            self.reencode_LSTM = nn.LSTM(self.feature_size, self.feature_size, num_layers=self.n_layers)
+            self.reencoded_lane_attention = LaneRelationalAttention(self.feature_size, self.lane_feature_size, self.n_heads_lanes)
+            self.reencoded_social_attention = SocialRelationalAttention(self.feature_size, self.n_heads_past)
         # self.lane_attention_fut = LaneRelationalAttention(self.feature_size, self.lane_feature_size, self.n_heads_lanes)
         # self.social_attention_fut = SocialRelationalAttention(self.feature_size, self.n_heads_past)
 
@@ -255,10 +266,15 @@ class AttentionPredictor(nn.Module, ParametersAttentionPredictor):
         self.lane_attention.training = train
         self.social_attention.training = train
 
-    def forward(self, input, mask_input, lane_input, lane_mask, len_pred, init_pos=None, keep_state=False):
+    def get_lane_attention_matrix(self):
+        return self.lane_attention.get_attention_matrix()
+
+    def get_social_attention_matrix(self):
+        return self.social_attention.get_attention_matrix()
+
+    def forward(self, input, mask_input, lane_input=None, lane_mask=None, len_pred=30, init_pos=None, keep_state=False):
         batch_size = input.shape[1]
         n_vehicles = input.shape[2]
-
 
         if self.separate_ego:
             h, (self.hx, self.cx) = self.traj_embedding(input[:, : , 1:, :], keep_state)
@@ -273,13 +289,17 @@ class AttentionPredictor(nn.Module, ParametersAttentionPredictor):
         else:
             h_pos = 0
 
-        embedded_lanes = self.lane_embedding(lane_input, keep_state)
+        is_lane = False
+        if lane_input is not None and lane_input.shape[2]>0:
+            is_lane = True
+            embedded_lanes = self.lane_embedding(lane_input, keep_state)
 
         if self.separate_ego:
             h = torch.cat((h_ego, h), dim=2)
-        h = self.lane_attention(h, h_pos, embedded_lanes, lane_mask)
+        if is_lane:
+            h = self.lane_attention(h, h_pos, embedded_lanes, mask_input, lane_mask)
         h = self.social_attention(h, h_pos, mask_input)
-        h = self.layer_norm(h)
+        # h = self.layer_norm(h)
         h = h.repeat((len_pred, 1, 1))
 
         if self.separate_ego:
@@ -294,17 +314,29 @@ class AttentionPredictor(nn.Module, ParametersAttentionPredictor):
         else:
             h, _ = self.pred_LSTM(h, (self.hx, self.cx))
             h = h.view(len_pred, batch_size, n_vehicles, self.feature_size)
-        if init_pos is not None:
-            h = self.lane_attention_fut(torch.cumsum(h, dim=0), h_pos, embedded_lanes, lane_mask)
-            h = self.social_attention_fut(torch.cumsum(h, dim=0), h_pos, mask_input)
-        else:
-            h = self.lane_attention_fut(h, h_pos, embedded_lanes, lane_mask)
-            h = self.social_attention_fut(h, h_pos, mask_input)
-            init_pos = 0
+        # if init_pos is not None:
+        #     h = self.lane_attention_fut(torch.cumsum(h, dim=0), h_pos, embedded_lanes, lane_mask)
+        #     # h = self.social_attention_fut(torch.cumsum(h, dim=0), h_pos, mask_input)
+        # else:
+        #     h = self.lane_attention_fut(h, h_pos, embedded_lanes, lane_mask)
+        #     # h = self.social_attention_fut(h, h_pos, mask_input)
+        #     init_pos = 0
+
+        for i in range(self.n_loop):
+            h = h.view(len_pred, batch_size * n_vehicles, self.feature_size)
+            _, (h, _) = self.reencode_LSTM(h, (self.hx, self.cx))
+            h = h[-1].view(1, batch_size, n_vehicles, self.feature_size)
+            if is_lane:
+                h = self.reencoded_lane_attention(h, h_pos, embedded_lanes, mask_input, lane_mask)
+            h = self.reencoded_social_attention(h, h_pos, mask_input)
+            h = h.repeat((len_pred, 1, 1))
+            h, _ = self.pred_LSTM(h, (self.hx, self.cx))
+            h = h.view(len_pred, batch_size, n_vehicles, self.feature_size)
+            # h = self.lane_attention_fut(h, h_pos, embedded_lanes, lane_mask)
+            # h = self.social_attention_fut(h, h_pos, mask_input)
 
         h = h.view(len_pred, batch_size, n_vehicles, self.feature_size)
         # h = self.layer_norm_fut(h)
         h = self.output_layer(init_pos, h, mask_input)
 
         return h
-

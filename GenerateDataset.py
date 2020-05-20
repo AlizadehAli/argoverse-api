@@ -11,8 +11,8 @@ from get_model import get_model
 
 
 ##set root_dir to the correct path to your dataset folder
-root_dir = 'test_obs/data/'
-# root_dir = 'forecasting_sample/data/'
+# root_dir = 'test_obs/data/'
+root_dir = 'forecasting_sample/data/'
 # root_dir = 'train/data'
 # root_dir = 'val/data'
 
@@ -166,7 +166,7 @@ for data in afl:
 
 if print_metrics:
     compute_forecasting_metrics(output_all, truth_all, city_names, max_n_guesses=6, horizon=len_pred, miss_threshold=2)
-output_path = 'test_obs/dataset2/'
+output_path = 'forecasting_sample/dataset2/'
 
 # generate_forecasting_h5(output_all, output_path)
 

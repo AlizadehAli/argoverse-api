@@ -163,5 +163,5 @@ def get_img_contours(img: np.ndarray) -> np.ndarray:
     threshold_val = 127
     max_binary_val = 255
     ret, thresh = cv2.threshold(imgray, threshold_val, max_binary_val, 0)
-    contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contours = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[1]
     return contours

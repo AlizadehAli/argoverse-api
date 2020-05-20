@@ -21,14 +21,14 @@ st.title('Plot sample trajectories from argoverse')
 dataset_path = "val/dataset2/"
 
 # @st.cache
-def get_dataset2(scale_factor, log_dir, load_model_name):
+def get_dataset(scale_factor, log_dir, load_model_name):
     from pydoc import locate
     # ArgoDataset = locate(log_dir + '.' + load_model_name + ".dataset_loader.ArgoDataset")
     ArgoDataset = locate("dataset_loader.ArgoDataset")
     return ArgoDataset(dataset_path, normalize=True,
                        scale_factor=scale_factor, limit_file_number=2)
 
-def get_dataset(scale_factor, log_dir, load_model_name):
+def get_dataset2(scale_factor, log_dir, load_model_name):
     # current_path = os.getcwd()
     # sys.path.insert(1, current_path + '/../')
     return FusionDataset('../data_fusion/SUV_TF_60kkm/test_sequenced_data.tar')

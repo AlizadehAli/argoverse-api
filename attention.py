@@ -21,8 +21,7 @@ def attention(query, key, value, mask, scale=0):
     #     if mask.ndim == scores.ndim:
     #         scores = scores.masked_fill(mask == 0, -1e9)
     #     else:
-    mask = torch.any(mask, 0)
-    scores = scores.masked_fill(mask.unsqueeze(-2) == 0, -1e9)
+    scores = scores.masked_fill(mask == 0, -1e9)
     p_attn = F.softmax(scores, dim=-1)
 
     # if dropout is not None:
@@ -30,6 +29,15 @@ def attention(query, key, value, mask, scale=0):
     output = torch.matmul(p_attn, value)
     return output
 
+def attention_matrix(query, key, mask, scale=0):
+    if scale == 0:
+        d_k = query.size(-1)
+    else:
+        d_k = scale
+    scores = torch.matmul(query, key.transpose(-2, -1)) \
+             / math.sqrt(d_k)
+    scores = scores.masked_fill(mask == 0, -1e9)
+    return F.softmax(scores, dim=-1)
 
 @torch.jit.script
 def geometric_attention(query, key, value, mask, scale=0):
@@ -57,7 +65,7 @@ def geometric_attention(query, key, value, mask, scale=0):
     return output
 
 
-@torch.jit.script
+# @torch.jit.script
 def relational_attention(relation, query, key, value, mask, scale=0):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, int) -> Tensor
     att = attention(query, key, value, mask, scale)
@@ -90,6 +98,11 @@ class LaneAttention(nn.Module):
         self.attention_combine = nn.Conv2d(self.feature_size, self.feature_size, (1, conv_time_kernel),
                                            padding=(0, padding), bias=False)
 
+        self.attention_matrix = None
+
+    def get_attention_matrix(self):
+        return self.attention_matrix
+
     def forward(self, vehicles, lanes, mask_lanes):
         batch_size = vehicles.shape[1]
         n_vehicles = vehicles.shape[2]
@@ -106,7 +119,7 @@ class LaneAttention(nn.Module):
         value = value.permute(0, 1, 3, 2, 4)
         mask_lanes = torch.any(mask_lanes, 0).view(1, batch_size * n_vehicles, 1, n_lanes)
         mask_lanes = mask_lanes.repeat((len_pred, 1, self.n_heads, 1))
-
+        self.attention_matrix = attention_matrix(query, key, mask_lanes)
         output = attention(query, key, value, mask_lanes).reshape(len_pred, batch_size,
                                                                   n_vehicles,
                                                                   self.feature_size)
@@ -187,8 +200,12 @@ class LaneRelationalAttention(nn.Module):
 
         self.attention_combine = nn.Linear(self.feature_size, self.feature_size, bias=use_bias)
 
-    def forward(self, vehicles, initial_pos, lanes, mask_lanes):
-        # type: (Tensor, float, Tensor, Tensor) -> Tensor
+        self.layer_norm = nn.LayerNorm(self.feature_size)
+
+
+
+    def forward(self, vehicles, initial_pos, lanes, mask_input, mask_lanes):
+        # type: (Tensor, float, Tensor, Tensor, Tensor) -> Tensor
         vehicles = vehicles + initial_pos
         batch_size = vehicles.shape[1]
         n_vehicles = vehicles.shape[2]
@@ -206,15 +223,17 @@ class LaneRelationalAttention(nn.Module):
                         .contiguous()
                         .view(len_pred, batch_size, n_vehicles,
                               self.n_heads, n_heads_features)).permute(0, 1, 3, 2, 4)
-        mask_lanes = torch.any(mask_lanes, 0).view(1, batch_size, 1, n_lanes)
-        mask_lanes = mask_lanes.repeat((len_pred, 1, self.n_heads, 1))
+        mask_lanes = torch.any(mask_lanes, 0).view(1, batch_size, 1, 1, n_lanes)
+        mask_lanes = mask_lanes.repeat(len_pred, 1, self.n_heads, 1, 1)
+        mask_input = mask_input[-1].view(1, batch_size, 1, mask_input.shape[2], 1).repeat(1, 1, self.n_heads, 1, 1)
+        mask = torch.matmul(mask_input.float(), mask_lanes.float()).bool()
 
-        output = geometric_relational_attention(relation, query, key, value, mask_lanes)
+        output = relational_attention(relation, query, key, value, mask)
         output = output.reshape(len_pred, batch_size, n_vehicles, self.feature_size)
 
         output = self.attention_combine(output) + vehicles - 2*initial_pos
 
-        return output
+        return self.layer_norm(output)
 
 
 class SocialRelationalAttention(nn.Module):
@@ -237,8 +256,26 @@ class SocialRelationalAttention(nn.Module):
         self.relation = nn.Conv2d(self.feature_size, self.feature_size, (1, conv_time_kernel),
                                   padding=(0, padding), bias=use_bias)
 
+        self.key1 = nn.Conv2d(self.feature_size, self.feature_size, (1, conv_time_kernel),
+                             padding=(0, padding), bias=use_bias)
+        self.query1 = nn.Conv2d(self.feature_size, self.feature_size, (1, conv_time_kernel),
+                               padding=(0, padding), bias=use_bias)
+        self.value1 = nn.Conv2d(self.feature_size, self.feature_size, (1, conv_time_kernel),
+                               padding=(0, padding), bias=use_bias)
+        self.relation1 = nn.Conv2d(self.feature_size, self.feature_size, (1, conv_time_kernel),
+                                  padding=(0, padding), bias=use_bias)
+
+        self.activation = Mish
+
         self.attention_combine = nn.Conv2d(self.feature_size, self.feature_size, (1, conv_time_kernel),
                                            padding=(0, padding), bias=use_bias)
+
+        self.layer_norm = nn.LayerNorm(self.feature_size)
+
+        self.attention_matrix = None
+
+    def get_attention_matrix(self):
+        return self.attention_matrix
 
     def forward(self, input, initial_pos, mask):
         # type: (Tensor, float, Tensor) -> Tensor
@@ -248,16 +285,16 @@ class SocialRelationalAttention(nn.Module):
         n_vehicles = input.shape[2]
         n_heads_features = self.feature_size // self.n_heads
 
-        key = self.key(input.permute(1, 3, 2, 0)).permute(3, 0, 2, 1).view(len_pred, batch_size,
+        key = self.key(self.activation(self.key1(input.permute(1, 3, 2, 0)))).permute(3, 0, 2, 1).view(len_pred, batch_size,
                                                                            n_vehicles, self.n_heads,
                                                                            n_heads_features)
-        query = self.query(input.permute(1, 3, 2, 0)).permute(3, 0, 2, 1).view(len_pred, batch_size,
+        query = self.query(self.activation(self.query1(input.permute(1, 3, 2, 0)))).permute(3, 0, 2, 1).view(len_pred, batch_size,
                                                                                n_vehicles, self.n_heads,
                                                                                n_heads_features)
-        value = self.value(input.permute(1, 3, 2, 0)).permute(3, 0, 2, 1).view(len_pred, batch_size,
+        value = self.value(self.activation(self.value1(input.permute(1, 3, 2, 0)))).permute(3, 0, 2, 1).view(len_pred, batch_size,
                                                                                n_vehicles, self.n_heads,
                                                                                n_heads_features)
-        relation = self.relation(input.permute(1, 3, 2, 0)).permute(3, 0, 2, 1).view(len_pred, batch_size,
+        relation = self.relation(self.activation(self.relation1(input.permute(1, 3, 2, 0)))).permute(3, 0, 2, 1).view(len_pred, batch_size,
                                                                                      n_vehicles, self.n_heads,
                                                                                      n_heads_features)
 
@@ -266,9 +303,10 @@ class SocialRelationalAttention(nn.Module):
         value = value.permute(0, 1, 3, 2, 4)
         relation = relation.permute(0, 1, 3, 2, 4)
 
-        mask = mask.unsqueeze(2).repeat((1, 1, self.n_heads, 1))
-
-        output = geometric_relational_attention(
+        mask = mask[-1].view(1, batch_size, 1, mask.shape[2], 1).repeat(1, 1, self.n_heads, 1, 1)
+        mask = torch.matmul(mask.float(), mask.transpose(-1, -2).float()).bool()
+        self.attention_matrix = attention_matrix(query, key, mask)
+        output = relational_attention(
             relation, query, key, value, mask
         ).permute(0, 1, 3, 2, 4).reshape(len_pred, batch_size,
                                          n_vehicles,
@@ -277,7 +315,7 @@ class SocialRelationalAttention(nn.Module):
 
         output = self.attention_combine(output).permute(3, 0, 2, 1) + input - 2*initial_pos
 
-        return output.view(len_pred, batch_size * n_vehicles, self.feature_size)
+        return self.layer_norm(output.view(len_pred, batch_size * n_vehicles, self.feature_size))
 
 
 class LaneFollow(nn.Module):

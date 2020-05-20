@@ -1,6 +1,7 @@
 from argoverse.evaluation.competition_util import generate_forecasting_h5
 from dataset_loader import ArgoDataset
 from torch.utils.data import DataLoader
+from loss_functions import xytheta2xy
 
 # from attention_predictor import AttentionPredictor
 import matplotlib.pyplot as plt
@@ -8,6 +9,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import pickle
+import h5py
+import os
 
 from get_model import get_model
 
@@ -26,12 +29,13 @@ len_pred = 30
 n_points_slope = 20
 batch_size = 32
 open_loop = False
-load_model_name = 'model_sumAttention_best_122_bidir_4_ter'
+load_model_name = 'model_sumAttention_122_loopy_5'
 net = get_model('runs', load_model_name, load_model_name, False, len_hist, len_lane, len_pred)
 net = net.cuda()
-net.set_training(True)
+# net.set_training(True)
 
 test_set = ArgoDataset('test_obs/dataset2/', normalize=True)
+test_set.time_len = 20
 test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False,
                         num_workers=0, collate_fn=test_set.collate_fn)
 
@@ -124,8 +128,9 @@ counter = 0
 #
 #     output_all[idx] = scene_rotation(pred_fut[:, 0, 0, :, :2], -angle).transpose((1, 0, 2)) + mean_pos
 #     counter += 1
-
-output_all2 = {}
+n_pred = 6
+future_frames = 30
+output_all2 = np.zeros([len(dataset)*n_pred*future_frames, 3], dtype=np.float32)
 id_list = test_set.idx_list
 for batch, data in enumerate(test_loader):
     batch_past, batch_fut, mask_past, mask_fut, batch_lanes, mask_lanes, angle, mean_pos = data
@@ -136,13 +141,19 @@ for batch, data in enumerate(test_loader):
         mask_lanes = mask_lanes.cuda()
     print('\r' + str(counter) + '/' + str(len(dataset)), end="")
     pred_fut = net(batch_past, mask_past, batch_lanes, mask_lanes, len_pred)
+    pred_fut = xytheta2xy(pred_fut[:, :, 0:1, :, :], 4)
     pred_fut = pred_fut.detach().cpu().numpy()
     pred_fut = sort_predictions(pred_fut)
     batch_size = batch_past.shape[1]
     for i in range(batch_size):
-        output_all2[id_list[counter+i]] = scene_rotation(pred_fut[:, i, 0, :, :2], -angle[i]).transpose((1, 0, 2)) + mean_pos[i]
+        pred = scene_rotation(pred_fut[:, i, 0, :, :2], -angle[i]).transpose((1, 0, 2)) + mean_pos[i]
+        output_all2[(counter + i)*n_pred*future_frames:(counter + i + 1)*n_pred*future_frames, 0] = id_list[counter + i]
+        output_all2[(counter + i)*n_pred*future_frames:(counter + i + 1)*n_pred*future_frames, 1:] = pred.reshape((n_pred*future_frames, 2))
     counter += batch_size
 
 output_path = 'competition_files/'
-
-generate_forecasting_h5(output_all2, output_path, load_model_name)
+hf = h5py.File(os.path.join(output_path, load_model_name + ".h5"), "w")
+#output_all2 = output_all2.tolist()
+hf.create_dataset("argoverse_forecasting", data=output_all2, compression="gzip", compression_opts=9)
+hf.close()
+# generate_forecasting_h5(output_all2, output_path, load_model_name)

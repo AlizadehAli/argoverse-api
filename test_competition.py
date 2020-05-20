@@ -3,6 +3,9 @@ from dataset_loader import ArgoDataset
 
 # from attention_predictor import AttentionPredictor
 import matplotlib.pyplot as plt
+from dataset_loader import ArgoDataset
+from torch.utils.data import DataLoader
+from loss_functions import xytheta2xy
 
 import numpy as np
 import torch
@@ -23,13 +26,18 @@ len_hist = 20
 len_lane = 70
 len_pred = 30
 n_points_slope = 20
-open_loop = True
-load_model_name = 'model_sumAttention_best_122_bidir_4_ter'
+open_loop = False
+batch_size = 32
+load_model_name = 'model_sumAttention_122_loopy_5'
 net = get_model('runs', load_model_name, load_model_name, False, len_hist, len_lane, len_pred)
-net.set_training(True)
+net = net.cuda()
+# net.set_training(True)
 
-
+val_set = ArgoDataset('val/dataset2/', normalize=True)
+val_loader = DataLoader(val_set, batch_size=batch_size, shuffle=False,
+                        num_workers=0, collate_fn=val_set.collate_fn)
 def sort_predictions(pred_fut):
+    pred_fut[:, :, :, :, 5] = np.mean(pred_fut[:, :, :, :, 5], axis=0, keepdims=True)
     flat_pred_test = pred_fut.reshape([-1, 6, 6])
     flat_argsort_p = np.argsort(flat_pred_test[:, :, 5], axis=1)[:, ::-1]
     flat_pred_test_sorted_p = flat_pred_test.copy()
@@ -95,36 +103,35 @@ FDE6_sum = 0
 FDE3_sum = 0
 FDE1_sum = 0
 output_all = {}
-for idx, data in dataset.items():
-    traj_past, traj_fut, mask_past, lanes, mask_lanes, mean_pos, angle = get_torch_data(data)
+for batch, data in enumerate(val_loader):
+    batch_past, batch_fut, mask_past, mask_fut, batch_lanes, mask_lanes, angle, mean_pos = data
+    if torch.cuda.is_available():
+        batch_past = batch_past.cuda()
+        mask_past = mask_past.cuda()
+        batch_lanes = batch_lanes.cuda()
+        mask_lanes = mask_lanes.cuda()
     print('\r'+str(counter)+'/'+str(len(dataset)), end="")
-    if traj_past.shape[2] == 1:
-        traj_past = torch.cat((traj_past, torch.zeros_like(traj_past)), 2)
-        mask_past = torch.cat((mask_past, torch.zeros_like(mask_past)), 2)
 
     if open_loop:
-        current_pos = traj_past[-1:]
+        current_pos = batch_past[:, -1:]
     else:
         current_pos = None
 
-    pred_fut = net(traj_past, mask_past,
-                   lanes, mask_lanes, len_pred, init_pos=current_pos)
-    if open_loop:
-        pred_fut[:, :, :, :, :2] = \
-        torch.cumsum(pred_fut[:, :, :, :, :2], dim=0) + current_pos[:, :, :1, :].unsqueeze(3)
+    pred_fut = net(batch_past, mask_past, batch_lanes, mask_lanes, len_pred)
+    pred_fut = xytheta2xy(pred_fut[:, :, 0:1, :, :], 4)
     pred_fut = pred_fut.detach().cpu().numpy()
+    batch_fut = batch_fut[:, :, :1, :2].detach().cpu().numpy()
     pred_fut = sort_predictions(pred_fut)
+    batch_size = batch_past.shape[1]
 
-    if traj_fut.shape[0] == pred_fut.shape[0]:
-        error = traj_fut[:, None, 0, None, :] - pred_fut[:, :, 0, :, :2]
+    if batch_fut.shape[0] == pred_fut.shape[0]:
+        error = batch_fut[:, :, 0, None, :] - pred_fut[:, :, 0, :, :2]
         FDE = np.sqrt(np.sum(error[-1]*error[-1], axis=-1))
-        FDE6_sum += np.min(FDE)
-        FDE = FDE[0, :3]
-        FDE3_sum += np.min(FDE)
-        FDE1_sum += FDE[0]
-    output_all[idx] = scene_rotation(pred_fut[:, 0, 0, :, :2], -angle).transpose((1, 0, 2)) + mean_pos
-
-    counter += 1
+        FDE6_sum += np.sum(np.min(FDE, 1), 0)
+        FDE = FDE[:, :3]
+        FDE3_sum += np.sum(np.min(FDE, 1), 0)
+        FDE1_sum += np.sum(FDE, 0)[0]
+    counter += batch_size
 
 print('Mean FDE(K=6)', FDE6_sum/counter)
 print('Mean FDE(K=3)', FDE3_sum/counter)

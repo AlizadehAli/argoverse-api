@@ -24,7 +24,7 @@ class ArgoDataset(Dataset):
         self.load_dataset(dataset_dir, limit_file_number)
         self.idx_list = list(self.dataset.keys())
         self.down_sampling = 1
-        self.time_len = 20
+        self.time_len = 50
         self.hist_len = 20
         self.dist_max = 30
         self.min_num_obs = 4
@@ -90,21 +90,18 @@ class ArgoDataset(Dataset):
         mean_pos = self.dataset[idx]['mean_pos']
 
         if self.normalize:
-            X = rel_coor_all[self.hist_len-self.n_points_slope:self.hist_len, 0, 0]
-            Y = rel_coor_all[self.hist_len-self.n_points_slope:self.hist_len, 0, 1]
+            X = rel_coor_all[self.hist_len - self.n_points_slope:self.hist_len, 0, 0]
+            Y = rel_coor_all[self.hist_len - self.n_points_slope:self.hist_len, 0, 1]
             mdX = np.mean(X[1:] - X[:-1])
-            X = X - X.mean()
-            Y = Y - Y.mean()
-            XX = X.dot(X)
-            XY = X.dot(Y)
-            if mdX > 0:
-                angle = -np.arctan2(XY, XX)
-            else:
-                angle = np.pi - np.arctan2(XY, XX)
-            angle += np.pi/4
+            mdY = np.mean(Y[1:] - Y[:-1])
+            angle = -np.arctan2(mdY, mdX)
+            angle += np.pi / 4
 
             if self.random_rotation:
-                angle = angle + np.random.normal(0, self.angle_std)
+                if self.normalize:
+                    angle = angle + np.random.normal(0, self.angle_std)
+                else:
+                    angle = angle + np.random.uniform(-np.pi, np.pi)
             if self.random_translation:
                 distance = np.random.normal([0, 0], self.translation_distance_std, 2)
                 rel_coor_all = rel_coor_all + mask_all[:, :, None]*distance
@@ -193,6 +190,11 @@ class ArgoDataset(Dataset):
         lane_batch = torch.from_numpy(lane_batch.astype('float32'))
         mask_lane_batch = torch.from_numpy(mask_lane_batch.astype('bool'))
 
-        return data_batch[:hist_len], data_batch[hist_len:], mask_past, mask_fut, lane_batch, mask_lane_batch, angle_batch, mean_pos_batch
+        fut = data_batch[hist_len:]
+        angle = fut - data_batch[hist_len-1:-1]
+        angle = torch.atan2(fut[:, :, :, 1], fut[:, :, :, 0])*mask_fut
+        fut = torch.cat((fut, angle.unsqueeze(-1)), dim=-1)
+
+        return data_batch[:hist_len], fut, mask_past, mask_fut, lane_batch, mask_lane_batch, angle_batch, mean_pos_batch
 
 
